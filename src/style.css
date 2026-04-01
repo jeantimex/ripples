@@ -31,8 +31,6 @@ canvas {
   inset: 0;
   overflow: hidden;
   contain: layout paint style;
-  user-select: text;
-  -webkit-user-select: text;
 }
 
 .text-word {
@@ -42,6 +40,39 @@ canvas {
   white-space: pre;
   will-change: transform, color;
   contain: layout style paint;
-  user-select: text;
-  -webkit-user-select: text;
+}
+
+.footer-bar {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  display: flex;
+  justify-content: center;
+  padding: 16px 20px 20px;
+  pointer-events: none;
+}
+
+.footer-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border: 1px solid rgba(17, 17, 17, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.84);
+  color: #111;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-decoration: none;
+  backdrop-filter: blur(12px);
+  box-shadow: 0 10px 30px rgba(17, 17, 17, 0.08);
+  pointer-events: auto;
+}
+
+.footer-link__icon {
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
 }

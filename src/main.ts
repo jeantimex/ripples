@@ -36,6 +36,7 @@ type SimulationSettings = {
   dotRadius: number
   textCount: number
   textSize: number
+  textSelectable: boolean
   fieldCellSize: number
   rippleSpeed: number
   dropRadius: number
@@ -72,6 +73,7 @@ const TEXT_ACTIVE_LIGHTNESS = 28
 const TEXT_SPEED_FOR_MAX_DARKNESS = 140
 const TEXT_TONE_STEPS = 12
 const TEXT_POSITION_EPSILON = 0.1
+const PROJECT_URL = 'https://github.com/jeantimex/ripples'
 
 const app = document.querySelector<HTMLDivElement>('#app')
 
@@ -81,6 +83,8 @@ if (!app) {
 
 const canvas = document.createElement('canvas')
 const textLayer = document.createElement('div')
+const footer = document.createElement('footer')
+const footerLink = document.createElement('a')
 const maybeContext = canvas.getContext('2d')
 
 if (!maybeContext) {
@@ -89,18 +93,31 @@ if (!maybeContext) {
 
 const context = maybeContext
 textLayer.className = 'text-layer'
-app.replaceChildren(canvas, textLayer)
+footer.className = 'footer-bar'
+footerLink.className = 'footer-link'
+footerLink.href = PROJECT_URL
+footerLink.target = '_blank'
+footerLink.rel = 'noreferrer'
+footerLink.innerHTML = `
+  <svg viewBox="0 0 24 24" aria-hidden="true" class="footer-link__icon">
+    <path fill="currentColor" d="M12 1.5a10.5 10.5 0 0 0-3.32 20.46c.53.1.72-.23.72-.52v-1.82c-2.95.64-3.57-1.25-3.57-1.25-.48-1.22-1.17-1.54-1.17-1.54-.96-.65.07-.64.07-.64 1.06.08 1.62 1.09 1.62 1.09.95 1.62 2.48 1.15 3.08.88.1-.68.37-1.15.67-1.42-2.35-.27-4.82-1.18-4.82-5.23 0-1.15.4-2.08 1.08-2.82-.1-.27-.47-1.37.1-2.85 0 0 .88-.28 2.9 1.08a9.95 9.95 0 0 1 5.28 0c2.01-1.36 2.89-1.08 2.89-1.08.58 1.48.22 2.58.11 2.85.68.74 1.08 1.67 1.08 2.82 0 4.06-2.48 4.95-4.84 5.21.38.33.72.97.72 1.96v2.9c0 .29.19.63.73.52A10.5 10.5 0 0 0 12 1.5Z"/>
+  </svg>
+  <span>jeantimex</span>
+`
+app.replaceChildren(canvas, textLayer, footer)
+footer.append(footerLink)
 
 const fixedTimeStep = 1 / 60
 const maxFrameDelta = 1 / 20
 const maxSubsteps = 3
 
 const defaultSettings = {
-  mode: 'dot' as RenderMode,
+  mode: 'text' as RenderMode,
   dotSpacing: 15,
   dotRadius: 3,
-  textCount: 818,
+  textCount: 500,
   textSize: 13,
+  textSelectable: true,
   fieldCellSize: 18,
   rippleSpeed: 0.3,
   dropRadius: 79,
@@ -316,7 +333,18 @@ function clearTextLayer() {
 function updateTextLayerVisibility() {
   textLayer.style.display = settings.mode === 'text' ? 'block' : 'none'
   textLayer.style.pointerEvents = settings.mode === 'text' ? 'auto' : 'none'
+  textLayer.style.userSelect = settings.textSelectable ? 'text' : 'none'
+  textLayer.style.webkitUserSelect = settings.textSelectable ? 'text' : 'none'
   canvas.style.pointerEvents = settings.mode === 'text' ? 'none' : 'auto'
+
+  for (const particle of particles) {
+    if (!isWordParticle(particle)) {
+      continue
+    }
+
+    particle.element.style.userSelect = settings.textSelectable ? 'text' : 'none'
+    particle.element.style.webkitUserSelect = settings.textSelectable ? 'text' : 'none'
+  }
 }
 
 function getParticleLightness(particle: Particle) {
@@ -362,8 +390,9 @@ const dotFolder = gui.addFolder('Dot Settings')
 const textFolder = gui.addFolder('Text Settings')
 const dotSpacingController = dotFolder.add(settings, 'dotSpacing', 12, 60, 1).name('dot spacing')
 const dotRadiusController = dotFolder.add(settings, 'dotRadius', 1, 6, 0.1).name('dot radius')
-const textCountController = textFolder.add(settings, 'textCount', 20, 5000, 1).name('text count')
+const textCountController = textFolder.add(settings, 'textCount', 20, 800, 1).name('text count')
 const textSizeController = textFolder.add(settings, 'textSize', 10, 96, 1).name('text size')
+const textSelectableController = textFolder.add(settings, 'textSelectable').name('text selectable')
 const fieldCellSizeController = gui.add(settings, 'fieldCellSize', 8, 40, 1).name('field cell')
 gui.add(settings, 'rippleSpeed', 0.1, 4, 0.1).name('ripple speed')
 gui.add(settings, 'dropRadius', 40, 320, 1).name('click radius')
@@ -377,6 +406,7 @@ gui.add(settings, 'motionDamping', 1, 30, 0.5).name('damping')
 gui.add(settings, 'reset').name('reset')
 
 const controllers = gui.controllers
+gui.close()
 
 function syncGui() {
   for (const controller of controllers) {
@@ -416,6 +446,9 @@ textSizeController.onFinishChange(() => {
   if (settings.mode === 'text') {
     rebuildScene()
   }
+})
+textSelectableController.onChange(() => {
+  updateTextLayerVisibility()
 })
 
 syncModeFolders()
@@ -509,6 +542,8 @@ function createWordElement(text: string) {
   element.style.fontWeight = String(TEXT_FONT_WEIGHT)
   element.style.fontSize = `${settings.textSize}px`
   element.style.lineHeight = `${getTextLineHeight()}px`
+  element.style.userSelect = settings.textSelectable ? 'text' : 'none'
+  element.style.webkitUserSelect = settings.textSelectable ? 'text' : 'none'
   textLayer.append(element)
   return element
 }
