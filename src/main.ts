@@ -117,7 +117,7 @@ const defaultSettings = {
   dotRadius: 3,
   textCount: 500,
   textSize: 13,
-  textSelectable: true,
+  textSelectable: false,
   fieldCellSize: 18,
   rippleSpeed: 0.3,
   dropRadius: 79,
