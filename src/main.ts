@@ -31,6 +31,9 @@ const dotRadius = 2
 const fieldCellSize = 18
 const dropRadius = 180
 const dropStrength = 16
+const dragDropRadius = 110
+const dragDropStrength = 2.4
+const dragMinDistance = 12
 const rippleForce = 36000
 const springStrength = 20
 const motionDamping = 11
@@ -44,6 +47,10 @@ let dots: Dot[] = []
 let rippleField: RippleField
 let previousTime = 0
 let accumulatedTime = 0
+let isPointerDown = false
+let activePointerId: number | null = null
+let lastDragX = 0
+let lastDragY = 0
 
 class RippleField {
   private width: number
@@ -272,9 +279,61 @@ function frame(time: number) {
   window.requestAnimationFrame(frame)
 }
 
+function addDragDisturbance(x: number, y: number) {
+  const distance = Math.hypot(x - lastDragX, y - lastDragY)
+
+  if (distance < dragMinDistance) {
+    return
+  }
+
+  const steps = Math.max(1, Math.ceil(distance / dragMinDistance))
+
+  for (let index = 1; index <= steps; index += 1) {
+    const t = index / steps
+    rippleField.disturb(
+      lerp(lastDragX, x, t),
+      lerp(lastDragY, y, t),
+      dragDropRadius,
+      dragDropStrength,
+    )
+  }
+
+  lastDragX = x
+  lastDragY = y
+}
+
 canvas.addEventListener('pointerdown', (event) => {
+  isPointerDown = true
+  activePointerId = event.pointerId
+  lastDragX = event.clientX
+  lastDragY = event.clientY
+  canvas.setPointerCapture(event.pointerId)
   rippleField.disturb(event.clientX, event.clientY, dropRadius, dropStrength)
 })
+
+canvas.addEventListener('pointermove', (event) => {
+  if (!isPointerDown || event.pointerId !== activePointerId) {
+    return
+  }
+
+  addDragDisturbance(event.clientX, event.clientY)
+})
+
+function endPointerInteraction(event: PointerEvent) {
+  if (event.pointerId !== activePointerId) {
+    return
+  }
+
+  isPointerDown = false
+  activePointerId = null
+
+  if (canvas.hasPointerCapture(event.pointerId)) {
+    canvas.releasePointerCapture(event.pointerId)
+  }
+}
+
+canvas.addEventListener('pointerup', endPointerInteraction)
+canvas.addEventListener('pointercancel', endPointerInteraction)
 
 window.addEventListener('resize', resizeCanvas)
 
