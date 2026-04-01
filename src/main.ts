@@ -1,3 +1,4 @@
+import GUI from 'lil-gui'
 import './style.css'
 
 type Dot = {
@@ -7,6 +8,21 @@ type Dot = {
   y: number
   vx: number
   vy: number
+}
+
+type SimulationSettings = {
+  dotSpacing: number
+  dotRadius: number
+  fieldCellSize: number
+  dropRadius: number
+  dropStrength: number
+  dragDropRadius: number
+  dragDropStrength: number
+  dragMinDistance: number
+  rippleForce: number
+  springStrength: number
+  motionDamping: number
+  reset: () => void
 }
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -26,20 +42,23 @@ const context = maybeContext
 
 app.replaceChildren(canvas)
 
-const dotSpacing = 24
-const dotRadius = 2
-const fieldCellSize = 18
-const dropRadius = 180
-const dropStrength = 16
-const dragDropRadius = 110
-const dragDropStrength = 2.4
-const dragMinDistance = 12
-const rippleForce = 36000
-const springStrength = 20
-const motionDamping = 11
 const fixedTimeStep = 1 / 60
 const maxFrameDelta = 1 / 20
 const maxSubsteps = 3
+
+const defaultSettings = {
+  dotSpacing: 24,
+  dotRadius: 2,
+  fieldCellSize: 18,
+  dropRadius: 180,
+  dropStrength: 16,
+  dragDropRadius: 110,
+  dragDropStrength: 2.4,
+  dragMinDistance: 12,
+  rippleForce: 36000,
+  springStrength: 20,
+  motionDamping: 11,
+}
 
 let viewportWidth = 0
 let viewportHeight = 0
@@ -185,15 +204,57 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t
 }
 
-rippleField = new RippleField(1, 1, fieldCellSize)
+function rebuildScene() {
+  rippleField = new RippleField(viewportWidth || 1, viewportHeight || 1, settings.fieldCellSize)
+  createDots(viewportWidth, viewportHeight)
+  accumulatedTime = 0
+  draw()
+}
+
+const settings: SimulationSettings = {
+  ...defaultSettings,
+  reset: () => {
+    Object.assign(settings, defaultSettings)
+    syncGui()
+    rebuildScene()
+  },
+}
+
+const gui = new GUI({ title: 'Ripples' })
+const dotSpacingController = gui.add(settings, 'dotSpacing', 12, 60, 1).name('dot spacing')
+const dotRadiusController = gui.add(settings, 'dotRadius', 1, 6, 0.1).name('dot radius')
+const fieldCellSizeController = gui.add(settings, 'fieldCellSize', 8, 40, 1).name('field cell')
+gui.add(settings, 'dropRadius', 40, 320, 1).name('click radius')
+gui.add(settings, 'dropStrength', 1, 30, 0.1).name('click strength')
+gui.add(settings, 'dragDropRadius', 20, 220, 1).name('drag radius')
+gui.add(settings, 'dragDropStrength', 0.1, 10, 0.1).name('drag strength')
+gui.add(settings, 'dragMinDistance', 2, 40, 1).name('drag spacing')
+gui.add(settings, 'rippleForce', 1000, 80000, 100).name('ripple force')
+gui.add(settings, 'springStrength', 1, 60, 0.5).name('spring')
+gui.add(settings, 'motionDamping', 1, 30, 0.5).name('damping')
+gui.add(settings, 'reset').name('reset')
+
+const controllers = gui.controllers
+
+function syncGui() {
+  for (const controller of controllers) {
+    controller.updateDisplay()
+  }
+}
+
+dotSpacingController.onFinishChange(rebuildScene)
+fieldCellSizeController.onFinishChange(rebuildScene)
+dotRadiusController.onChange(draw)
+
+rippleField = new RippleField(1, 1, settings.fieldCellSize)
 
 function createDots(width: number, height: number) {
   const nextDots: Dot[] = []
-  const offsetX = (width % dotSpacing) * 0.5
-  const offsetY = (height % dotSpacing) * 0.5
+  const offsetX = (width % settings.dotSpacing) * 0.5
+  const offsetY = (height % settings.dotSpacing) * 0.5
 
-  for (let y = offsetY; y <= height; y += dotSpacing) {
-    for (let x = offsetX; x <= width; x += dotSpacing) {
+  for (let y = offsetY; y <= height; y += settings.dotSpacing) {
+    for (let x = offsetX; x <= width; x += settings.dotSpacing) {
       nextDots.push({
         originX: x,
         originY: y,
@@ -220,20 +281,18 @@ function resizeCanvas() {
 
   context.setTransform(dpr, 0, 0, dpr, 0, 0)
 
-  rippleField.resize(viewportWidth, viewportHeight)
-  createDots(viewportWidth, viewportHeight)
-  draw()
+  rebuildScene()
 }
 
 function updateDots(dt: number) {
   for (const dot of dots) {
     const gradient = rippleField.gradientAt(dot.x, dot.y)
-    const rippleFx = -gradient.x * rippleForce
-    const rippleFy = -gradient.y * rippleForce
-    const springFx = (dot.originX - dot.x) * springStrength
-    const springFy = (dot.originY - dot.y) * springStrength
-    const dampingFx = -dot.vx * motionDamping
-    const dampingFy = -dot.vy * motionDamping
+    const rippleFx = -gradient.x * settings.rippleForce
+    const rippleFy = -gradient.y * settings.rippleForce
+    const springFx = (dot.originX - dot.x) * settings.springStrength
+    const springFy = (dot.originY - dot.y) * settings.springStrength
+    const dampingFx = -dot.vx * settings.motionDamping
+    const dampingFy = -dot.vy * settings.motionDamping
 
     const ax = rippleFx + springFx + dampingFx
     const ay = rippleFy + springFy + dampingFy
@@ -264,7 +323,7 @@ function draw() {
 
   for (const dot of dots) {
     context.beginPath()
-    context.arc(dot.x, dot.y, dotRadius, 0, Math.PI * 2)
+    context.arc(dot.x, dot.y, settings.dotRadius, 0, Math.PI * 2)
     context.fill()
   }
 }
@@ -282,19 +341,19 @@ function frame(time: number) {
 function addDragDisturbance(x: number, y: number) {
   const distance = Math.hypot(x - lastDragX, y - lastDragY)
 
-  if (distance < dragMinDistance) {
+  if (distance < settings.dragMinDistance) {
     return
   }
 
-  const steps = Math.max(1, Math.ceil(distance / dragMinDistance))
+  const steps = Math.max(1, Math.ceil(distance / settings.dragMinDistance))
 
   for (let index = 1; index <= steps; index += 1) {
     const t = index / steps
     rippleField.disturb(
       lerp(lastDragX, x, t),
       lerp(lastDragY, y, t),
-      dragDropRadius,
-      dragDropStrength,
+      settings.dragDropRadius,
+      settings.dragDropStrength,
     )
   }
 
@@ -308,7 +367,7 @@ canvas.addEventListener('pointerdown', (event) => {
   lastDragX = event.clientX
   lastDragY = event.clientY
   canvas.setPointerCapture(event.pointerId)
-  rippleField.disturb(event.clientX, event.clientY, dropRadius, dropStrength)
+  rippleField.disturb(event.clientX, event.clientY, settings.dropRadius, settings.dropStrength)
 })
 
 canvas.addEventListener('pointermove', (event) => {
