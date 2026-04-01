@@ -22,6 +22,10 @@ type WordParticle = ParticleBase & {
   text: string
   width: number
   height: number
+  element: HTMLSpanElement
+  renderedX: number
+  renderedY: number
+  renderedTone: number
 }
 
 type Particle = DotParticle | WordParticle
@@ -33,6 +37,7 @@ type SimulationSettings = {
   textCount: number
   textSize: number
   fieldCellSize: number
+  rippleSpeed: number
   dropRadius: number
   dropStrength: number
   dragDropRadius: number
@@ -62,9 +67,11 @@ const TEXT_FONT_FAMILY = '"Helvetica Neue", Helvetica, Arial, sans-serif'
 const TEXT_FONT_WEIGHT = 600
 const TEXT_LINE_HEIGHT_RATIO = 1.32
 const TEXT_WORDS = TEXT_SOURCE.trim().split(/\s+/)
-const TEXT_IDLE_LIGHTNESS = 190
-const TEXT_ACTIVE_LIGHTNESS = 45
+const TEXT_IDLE_LIGHTNESS = 222
+const TEXT_ACTIVE_LIGHTNESS = 28
 const TEXT_SPEED_FOR_MAX_DARKNESS = 140
+const TEXT_TONE_STEPS = 12
+const TEXT_POSITION_EPSILON = 0.1
 
 const app = document.querySelector<HTMLDivElement>('#app')
 
@@ -73,6 +80,7 @@ if (!app) {
 }
 
 const canvas = document.createElement('canvas')
+const textLayer = document.createElement('div')
 const maybeContext = canvas.getContext('2d')
 
 if (!maybeContext) {
@@ -80,7 +88,8 @@ if (!maybeContext) {
 }
 
 const context = maybeContext
-app.replaceChildren(canvas)
+textLayer.className = 'text-layer'
+app.replaceChildren(canvas, textLayer)
 
 const fixedTimeStep = 1 / 60
 const maxFrameDelta = 1 / 20
@@ -88,18 +97,19 @@ const maxSubsteps = 3
 
 const defaultSettings = {
   mode: 'dot' as RenderMode,
-  dotSpacing: 24,
-  dotRadius: 2,
-  textCount: 2200,
+  dotSpacing: 15,
+  dotRadius: 3,
+  textCount: 818,
   textSize: 13,
   fieldCellSize: 18,
-  dropRadius: 180,
-  dropStrength: 16,
-  dragDropRadius: 110,
-  dragDropStrength: 2.4,
-  dragMinDistance: 12,
-  rippleForce: 36000,
-  springStrength: 20,
+  rippleSpeed: 0.3,
+  dropRadius: 79,
+  dropStrength: 5.4,
+  dragDropRadius: 38,
+  dragDropStrength: 1.1,
+  dragMinDistance: 6,
+  rippleForce: 36300,
+  springStrength: 7,
   motionDamping: 11,
 }
 
@@ -183,7 +193,7 @@ class RippleField {
         ) * 0.25
 
         let velocity = this.velocities[index]
-        velocity += (average - height) * 2
+        velocity += (average - height) * settings.rippleSpeed
         velocity *= 0.995
 
         this.nextVelocities[index] = velocity
@@ -269,6 +279,13 @@ function getTextLineHeight() {
   return Math.round(settings.textSize * TEXT_LINE_HEIGHT_RATIO)
 }
 
+function syncTextLayerTypography() {
+  textLayer.style.fontFamily = TEXT_FONT_FAMILY
+  textLayer.style.fontWeight = String(TEXT_FONT_WEIGHT)
+  textLayer.style.fontSize = `${settings.textSize}px`
+  textLayer.style.lineHeight = `${getTextLineHeight()}px`
+}
+
 function getTextSample() {
   const count = Math.max(1, Math.round(settings.textCount))
   const words = Array.from({ length: count }, (_, index) => TEXT_WORDS[index % TEXT_WORDS.length]!)
@@ -292,11 +309,39 @@ function setGuiSectionVisible(section: GUI, visible: boolean) {
   section.domElement.style.display = visible ? '' : 'none'
 }
 
+function clearTextLayer() {
+  textLayer.replaceChildren()
+}
+
+function updateTextLayerVisibility() {
+  textLayer.style.display = settings.mode === 'text' ? 'block' : 'none'
+  textLayer.style.pointerEvents = settings.mode === 'text' ? 'auto' : 'none'
+  canvas.style.pointerEvents = settings.mode === 'text' ? 'none' : 'auto'
+}
+
+function getParticleLightness(particle: Particle) {
+  const speed = Math.hypot(particle.vx, particle.vy)
+  const darkness = clamp(inverseLerp(0, TEXT_SPEED_FOR_MAX_DARKNESS, speed), 0, 1)
+
+  return Math.round(lerp(TEXT_IDLE_LIGHTNESS, TEXT_ACTIVE_LIGHTNESS, darkness))
+}
+
+function getQuantizedLightness(particle: Particle) {
+  const lightness = getParticleLightness(particle)
+  const normalized = inverseLerp(TEXT_ACTIVE_LIGHTNESS, TEXT_IDLE_LIGHTNESS, lightness)
+  const step = Math.round(clamp(normalized, 0, 1) * (TEXT_TONE_STEPS - 1))
+  const quantized = step / (TEXT_TONE_STEPS - 1)
+
+  return Math.round(lerp(TEXT_ACTIVE_LIGHTNESS, TEXT_IDLE_LIGHTNESS, quantized))
+}
+
 function rebuildScene() {
   rippleField = new RippleField(viewportWidth || 1, viewportHeight || 1, settings.fieldCellSize)
+  clearTextLayer()
   particles = settings.mode === 'text'
     ? createWordParticles(viewportWidth)
     : createDotParticles(viewportWidth, viewportHeight)
+  updateTextLayerVisibility()
   accumulatedTime = 0
   draw()
 }
@@ -320,6 +365,7 @@ const dotRadiusController = dotFolder.add(settings, 'dotRadius', 1, 6, 0.1).name
 const textCountController = textFolder.add(settings, 'textCount', 20, 5000, 1).name('text count')
 const textSizeController = textFolder.add(settings, 'textSize', 10, 96, 1).name('text size')
 const fieldCellSizeController = gui.add(settings, 'fieldCellSize', 8, 40, 1).name('field cell')
+gui.add(settings, 'rippleSpeed', 0.1, 4, 0.1).name('ripple speed')
 gui.add(settings, 'dropRadius', 40, 320, 1).name('click radius')
 gui.add(settings, 'dropStrength', 1, 30, 0.1).name('click strength')
 gui.add(settings, 'dragDropRadius', 20, 220, 1).name('drag radius')
@@ -347,6 +393,7 @@ function syncMode(value: RenderMode) {
   settings.mode = value
   syncGui()
   syncModeFolders()
+  updateTextLayerVisibility()
   rebuildScene()
 }
 
@@ -417,6 +464,8 @@ function createWordParticles(width: number) {
   const layoutResult = layoutWithLines(prepared, layoutWidth, textLineHeight)
   const nextParticles: WordParticle[] = []
 
+  syncTextLayerTypography()
+
   for (let lineIndex = 0; lineIndex < layoutResult.lines.length; lineIndex += 1) {
     const line = layoutResult.lines[lineIndex]!
     const lineTop = TEXT_BLOCK_PADDING + lineIndex * textLineHeight
@@ -434,6 +483,10 @@ function createWordParticles(width: number) {
         text: segment.text,
         width: segment.width,
         height: textLineHeight,
+        element: createWordElement(segment.text),
+        renderedX: Number.NaN,
+        renderedY: Number.NaN,
+        renderedTone: Number.NaN,
         originX: x,
         originY: lineTop,
         x,
@@ -446,6 +499,18 @@ function createWordParticles(width: number) {
   }
 
   return nextParticles
+}
+
+function createWordElement(text: string) {
+  const element = document.createElement('span')
+  element.className = 'text-word'
+  element.textContent = text
+  element.style.fontFamily = TEXT_FONT_FAMILY
+  element.style.fontWeight = String(TEXT_FONT_WEIGHT)
+  element.style.fontSize = `${settings.textSize}px`
+  element.style.lineHeight = `${getTextLineHeight()}px`
+  textLayer.append(element)
+  return element
 }
 
 function resizeCanvas() {
@@ -503,16 +568,25 @@ function draw() {
   context.fillStyle = '#111'
 
   if (settings.mode === 'text') {
-    context.font = getTextFont()
-    context.textBaseline = 'top'
-
     for (const particle of particles) {
       if (particle.kind === 'word') {
-        const speed = Math.hypot(particle.vx, particle.vy)
-        const darkness = clamp(inverseLerp(0, TEXT_SPEED_FOR_MAX_DARKNESS, speed), 0, 1)
-        const lightness = Math.round(lerp(TEXT_IDLE_LIGHTNESS, TEXT_ACTIVE_LIGHTNESS, darkness))
-        context.fillStyle = `rgb(${lightness}, ${lightness}, ${lightness})`
-        context.fillText(particle.text, particle.x, particle.y)
+        const lightness = getQuantizedLightness(particle)
+
+        if (
+          !Number.isFinite(particle.renderedX) ||
+          !Number.isFinite(particle.renderedY) ||
+          Math.abs(particle.x - particle.renderedX) > TEXT_POSITION_EPSILON ||
+          Math.abs(particle.y - particle.renderedY) > TEXT_POSITION_EPSILON
+        ) {
+          particle.element.style.transform = `translate3d(${particle.x}px, ${particle.y}px, 0)`
+          particle.renderedX = particle.x
+          particle.renderedY = particle.y
+        }
+
+        if (lightness !== particle.renderedTone) {
+          particle.element.style.color = `rgb(${lightness}, ${lightness}, ${lightness})`
+          particle.renderedTone = lightness
+        }
       }
     }
 
@@ -520,6 +594,8 @@ function draw() {
   }
 
   for (const particle of particles) {
+    const lightness = getParticleLightness(particle)
+    context.fillStyle = `rgb(${lightness}, ${lightness}, ${lightness})`
     context.beginPath()
     context.arc(particle.x, particle.y, settings.dotRadius, 0, Math.PI * 2)
     context.fill()
@@ -559,7 +635,35 @@ function addDragDisturbance(x: number, y: number) {
   lastDragY = y
 }
 
+function startTextInteraction(event: PointerEvent) {
+  if (settings.mode !== 'text') {
+    return
+  }
+
+  isPointerDown = true
+  activePointerId = event.pointerId
+  lastDragX = event.clientX
+  lastDragY = event.clientY
+  rippleField.disturb(event.clientX, event.clientY, settings.dropRadius, settings.dropStrength)
+}
+
+function moveTextInteraction(event: PointerEvent) {
+  if (settings.mode !== 'text') {
+    return
+  }
+
+  if (!isPointerDown || event.pointerId !== activePointerId || event.buttons === 0) {
+    return
+  }
+
+  addDragDisturbance(event.clientX, event.clientY)
+}
+
 canvas.addEventListener('pointerdown', (event) => {
+  if (settings.mode === 'text') {
+    return
+  }
+
   isPointerDown = true
   activePointerId = event.pointerId
   lastDragX = event.clientX
@@ -569,6 +673,10 @@ canvas.addEventListener('pointerdown', (event) => {
 })
 
 canvas.addEventListener('pointermove', (event) => {
+  if (settings.mode === 'text') {
+    return
+  }
+
   if (!isPointerDown || event.pointerId !== activePointerId) {
     return
   }
@@ -591,6 +699,11 @@ function endPointerInteraction(event: PointerEvent) {
 
 canvas.addEventListener('pointerup', endPointerInteraction)
 canvas.addEventListener('pointercancel', endPointerInteraction)
+
+textLayer.addEventListener('pointerdown', startTextInteraction)
+textLayer.addEventListener('pointermove', moveTextInteraction)
+window.addEventListener('pointerup', endPointerInteraction)
+window.addEventListener('pointercancel', endPointerInteraction)
 
 window.addEventListener('resize', resizeCanvas)
 
