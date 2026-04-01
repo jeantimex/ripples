@@ -8,9 +8,12 @@ body {
 body {
   overflow: hidden;
   background: #fff;
+  color: #111;
+  font-family: "Helvetica Neue", Helvetica, Arial, sans-serif;
 }
 
 #app {
+  position: relative;
   width: 100%;
   height: 100%;
 }

@@ -13,6 +13,7 @@
     "vite": "^6.4.1"
   },
   "dependencies": {
+    "@chenglou/pretext": "^0.0.3",
     "lil-gui": "^0.21.0"
   }
 }

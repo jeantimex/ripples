@@ -1,7 +1,10 @@
+import { layoutWithLines, prepareWithSegments, type PreparedTextWithSegments } from '@chenglou/pretext'
 import GUI from 'lil-gui'
 import './style.css'
 
-type Dot = {
+type RenderMode = 'dot' | 'text'
+
+type ParticleBase = {
   originX: number
   originY: number
   x: number
@@ -10,9 +13,25 @@ type Dot = {
   vy: number
 }
 
+type DotParticle = ParticleBase & {
+  kind: 'dot'
+}
+
+type WordParticle = ParticleBase & {
+  kind: 'word'
+  text: string
+  width: number
+  height: number
+}
+
+type Particle = DotParticle | WordParticle
+
 type SimulationSettings = {
+  mode: RenderMode
   dotSpacing: number
   dotRadius: number
+  textCount: number
+  textSize: number
   fieldCellSize: number
   dropRadius: number
   dropStrength: number
@@ -24,6 +43,15 @@ type SimulationSettings = {
   motionDamping: number
   reset: () => void
 }
+
+const TEXT_SOURCE =
+  'Pretext lays out each word first. The ripple field then pulls every word off its line and lets the springs settle it back into place.'
+const TEXT_BLOCK_MAX_WIDTH = 760
+const TEXT_BLOCK_PADDING = 64
+const TEXT_FONT_FAMILY = '"Helvetica Neue", Helvetica, Arial, sans-serif'
+const TEXT_FONT_WEIGHT = 600
+const TEXT_LINE_HEIGHT_RATIO = 1.32
+const TEXT_WORDS = TEXT_SOURCE.trim().split(/\s+/)
 
 const app = document.querySelector<HTMLDivElement>('#app')
 
@@ -39,7 +67,6 @@ if (!maybeContext) {
 }
 
 const context = maybeContext
-
 app.replaceChildren(canvas)
 
 const fixedTimeStep = 1 / 60
@@ -47,8 +74,11 @@ const maxFrameDelta = 1 / 20
 const maxSubsteps = 3
 
 const defaultSettings = {
+  mode: 'dot' as RenderMode,
   dotSpacing: 24,
   dotRadius: 2,
+  textCount: 18,
+  textSize: 44,
   fieldCellSize: 18,
   dropRadius: 180,
   dropStrength: 16,
@@ -62,7 +92,7 @@ const defaultSettings = {
 
 let viewportWidth = 0
 let viewportHeight = 0
-let dots: Dot[] = []
+let particles: Particle[] = []
 let rippleField: RippleField
 let previousTime = 0
 let accumulatedTime = 0
@@ -70,6 +100,8 @@ let isPointerDown = false
 let activePointerId: number | null = null
 let lastDragX = 0
 let lastDragY = 0
+let preparedText: PreparedTextWithSegments | null = null
+let preparedTextKey = ''
 
 class RippleField {
   private width: number
@@ -204,9 +236,46 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t
 }
 
+function isWordParticle(particle: Particle): particle is WordParticle {
+  return particle.kind === 'word'
+}
+
+function getTextFont() {
+  return `${TEXT_FONT_WEIGHT} ${settings.textSize}px ${TEXT_FONT_FAMILY}`
+}
+
+function getTextLineHeight() {
+  return Math.round(settings.textSize * TEXT_LINE_HEIGHT_RATIO)
+}
+
+function getTextSample() {
+  const count = Math.max(1, Math.round(settings.textCount))
+  const words = Array.from({ length: count }, (_, index) => TEXT_WORDS[index % TEXT_WORDS.length]!)
+  return words.join(' ')
+}
+
+function getPreparedText() {
+  const text = getTextSample()
+  const font = getTextFont()
+  const key = `${text}\n${font}`
+
+  if (preparedText === null || preparedTextKey !== key) {
+    preparedText = prepareWithSegments(text, font)
+    preparedTextKey = key
+  }
+
+  return preparedText
+}
+
+function setGuiSectionVisible(section: GUI, visible: boolean) {
+  section.domElement.style.display = visible ? '' : 'none'
+}
+
 function rebuildScene() {
   rippleField = new RippleField(viewportWidth || 1, viewportHeight || 1, settings.fieldCellSize)
-  createDots(viewportWidth, viewportHeight)
+  particles = settings.mode === 'text'
+    ? createWordParticles(viewportWidth, viewportHeight)
+    : createDotParticles(viewportWidth, viewportHeight)
   accumulatedTime = 0
   draw()
 }
@@ -216,13 +285,19 @@ const settings: SimulationSettings = {
   reset: () => {
     Object.assign(settings, defaultSettings)
     syncGui()
+    syncModeFolders()
     rebuildScene()
   },
 }
 
 const gui = new GUI({ title: 'Ripples' })
-const dotSpacingController = gui.add(settings, 'dotSpacing', 12, 60, 1).name('dot spacing')
-const dotRadiusController = gui.add(settings, 'dotRadius', 1, 6, 0.1).name('dot radius')
+const modeController = gui.add(settings, 'mode', ['dot', 'text']).name('mode')
+const dotFolder = gui.addFolder('Dot Settings')
+const textFolder = gui.addFolder('Text Settings')
+const dotSpacingController = dotFolder.add(settings, 'dotSpacing', 12, 60, 1).name('dot spacing')
+const dotRadiusController = dotFolder.add(settings, 'dotRadius', 1, 6, 0.1).name('dot radius')
+const textCountController = textFolder.add(settings, 'textCount', 3, 40, 1).name('text count')
+const textSizeController = textFolder.add(settings, 'textSize', 18, 96, 1).name('text size')
 const fieldCellSizeController = gui.add(settings, 'fieldCellSize', 8, 40, 1).name('field cell')
 gui.add(settings, 'dropRadius', 40, 320, 1).name('click radius')
 gui.add(settings, 'dropStrength', 1, 30, 0.1).name('click strength')
@@ -242,20 +317,52 @@ function syncGui() {
   }
 }
 
-dotSpacingController.onFinishChange(rebuildScene)
+function syncModeFolders() {
+  setGuiSectionVisible(dotFolder, settings.mode === 'dot')
+  setGuiSectionVisible(textFolder, settings.mode === 'text')
+}
+
+function syncMode(value: RenderMode) {
+  settings.mode = value
+  syncGui()
+  syncModeFolders()
+  rebuildScene()
+}
+
+modeController.onFinishChange((value: RenderMode) => {
+  syncMode(value)
+})
+dotSpacingController.onFinishChange(() => {
+  if (settings.mode === 'dot') {
+    rebuildScene()
+  }
+})
 fieldCellSizeController.onFinishChange(rebuildScene)
 dotRadiusController.onChange(draw)
+textCountController.onFinishChange(() => {
+  if (settings.mode === 'text') {
+    rebuildScene()
+  }
+})
+textSizeController.onFinishChange(() => {
+  if (settings.mode === 'text') {
+    rebuildScene()
+  }
+})
+
+syncModeFolders()
 
 rippleField = new RippleField(1, 1, settings.fieldCellSize)
 
-function createDots(width: number, height: number) {
-  const nextDots: Dot[] = []
+function createDotParticles(width: number, height: number) {
+  const nextParticles: DotParticle[] = []
   const offsetX = (width % settings.dotSpacing) * 0.5
   const offsetY = (height % settings.dotSpacing) * 0.5
 
   for (let y = offsetY; y <= height; y += settings.dotSpacing) {
     for (let x = offsetX; x <= width; x += settings.dotSpacing) {
-      nextDots.push({
+      nextParticles.push({
+        kind: 'dot',
         originX: x,
         originY: y,
         x,
@@ -266,7 +373,60 @@ function createDots(width: number, height: number) {
     }
   }
 
-  dots = nextDots
+  return nextParticles
+}
+
+function sliceLineSegments(prepared: PreparedTextWithSegments, start: number, end: number) {
+  const segments: { text: string; width: number }[] = []
+
+  for (let index = start; index < end; index += 1) {
+    segments.push({
+      text: prepared.segments[index] ?? '',
+      width: prepared.widths[index] ?? 0,
+    })
+  }
+
+  return segments
+}
+
+function createWordParticles(width: number, height: number) {
+  const layoutWidth = Math.max(220, Math.min(width - TEXT_BLOCK_PADDING * 2, TEXT_BLOCK_MAX_WIDTH))
+  const textLineHeight = getTextLineHeight()
+  const prepared = getPreparedText()
+  const layoutResult = layoutWithLines(prepared, layoutWidth, textLineHeight)
+  const blockHeight = layoutResult.lines.length * textLineHeight
+  const top = Math.max(TEXT_BLOCK_PADDING, (height - blockHeight) * 0.5)
+  const nextParticles: WordParticle[] = []
+
+  for (let lineIndex = 0; lineIndex < layoutResult.lines.length; lineIndex += 1) {
+    const line = layoutResult.lines[lineIndex]!
+    const lineTop = top + lineIndex * textLineHeight
+    let x = (width - line.width) * 0.5
+    const lineSegments = sliceLineSegments(prepared, line.start.segmentIndex, line.end.segmentIndex)
+
+    for (const segment of lineSegments) {
+      if (segment.text.trim().length === 0) {
+        x += segment.width
+        continue
+      }
+
+      nextParticles.push({
+        kind: 'word',
+        text: segment.text,
+        width: segment.width,
+        height: textLineHeight,
+        originX: x,
+        originY: lineTop,
+        x,
+        y: lineTop,
+        vx: 0,
+        vy: 0,
+      })
+      x += segment.width
+    }
+  }
+
+  return nextParticles
 }
 
 function resizeCanvas() {
@@ -284,23 +444,25 @@ function resizeCanvas() {
   rebuildScene()
 }
 
-function updateDots(dt: number) {
-  for (const dot of dots) {
-    const gradient = rippleField.gradientAt(dot.x, dot.y)
+function updateParticles(dt: number) {
+  for (const particle of particles) {
+    const sampleX = isWordParticle(particle) ? particle.x + particle.width * 0.5 : particle.x
+    const sampleY = isWordParticle(particle) ? particle.y + particle.height * 0.5 : particle.y
+    const gradient = rippleField.gradientAt(sampleX, sampleY)
     const rippleFx = -gradient.x * settings.rippleForce
     const rippleFy = -gradient.y * settings.rippleForce
-    const springFx = (dot.originX - dot.x) * settings.springStrength
-    const springFy = (dot.originY - dot.y) * settings.springStrength
-    const dampingFx = -dot.vx * settings.motionDamping
-    const dampingFy = -dot.vy * settings.motionDamping
+    const springFx = (particle.originX - particle.x) * settings.springStrength
+    const springFy = (particle.originY - particle.y) * settings.springStrength
+    const dampingFx = -particle.vx * settings.motionDamping
+    const dampingFy = -particle.vy * settings.motionDamping
 
     const ax = rippleFx + springFx + dampingFx
     const ay = rippleFy + springFy + dampingFy
 
-    dot.vx += ax * dt
-    dot.vy += ay * dt
-    dot.x += dot.vx * dt
-    dot.y += dot.vy * dt
+    particle.vx += ax * dt
+    particle.vy += ay * dt
+    particle.x += particle.vx * dt
+    particle.y += particle.vy * dt
   }
 }
 
@@ -311,7 +473,7 @@ function updateSimulation(dt: number) {
 
   while (accumulatedTime >= fixedTimeStep && steps < maxSubsteps) {
     rippleField.step()
-    updateDots(fixedTimeStep)
+    updateParticles(fixedTimeStep)
     accumulatedTime -= fixedTimeStep
     steps += 1
   }
@@ -321,9 +483,22 @@ function draw() {
   context.clearRect(0, 0, viewportWidth, viewportHeight)
   context.fillStyle = '#111'
 
-  for (const dot of dots) {
+  if (settings.mode === 'text') {
+    context.font = getTextFont()
+    context.textBaseline = 'top'
+
+    for (const particle of particles) {
+      if (particle.kind === 'word') {
+        context.fillText(particle.text, particle.x, particle.y)
+      }
+    }
+
+    return
+  }
+
+  for (const particle of particles) {
     context.beginPath()
-    context.arc(dot.x, dot.y, settings.dotRadius, 0, Math.PI * 2)
+    context.arc(particle.x, particle.y, settings.dotRadius, 0, Math.PI * 2)
     context.fill()
   }
 }
