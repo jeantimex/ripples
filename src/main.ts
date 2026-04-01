@@ -44,14 +44,27 @@ type SimulationSettings = {
   reset: () => void
 }
 
-const TEXT_SOURCE =
-  'Pretext lays out each word first. The ripple field then pulls every word off its line and lets the springs settle it back into place.'
-const TEXT_BLOCK_MAX_WIDTH = 760
-const TEXT_BLOCK_PADDING = 64
+const TEXT_SOURCE = `To be, or not to be, that is the question:
+Whether 'tis nobler in the mind to suffer
+The slings and arrows of outrageous fortune,
+Or to take arms against a sea of troubles,
+And by opposing end them. To die, to sleep,
+No more, and by a sleep to say we end
+The heart-ache and the thousand natural shocks
+That flesh is heir to, 'tis a consummation
+Devoutly to be wish'd. To die, to sleep,
+To sleep, perchance to dream, ay, there's the rub,
+For in that sleep of death what dreams may come,
+When we have shuffled off this mortal coil,
+Must give us pause.`
+const TEXT_BLOCK_PADDING = 20
 const TEXT_FONT_FAMILY = '"Helvetica Neue", Helvetica, Arial, sans-serif'
 const TEXT_FONT_WEIGHT = 600
 const TEXT_LINE_HEIGHT_RATIO = 1.32
 const TEXT_WORDS = TEXT_SOURCE.trim().split(/\s+/)
+const TEXT_IDLE_LIGHTNESS = 190
+const TEXT_ACTIVE_LIGHTNESS = 45
+const TEXT_SPEED_FOR_MAX_DARKNESS = 140
 
 const app = document.querySelector<HTMLDivElement>('#app')
 
@@ -77,8 +90,8 @@ const defaultSettings = {
   mode: 'dot' as RenderMode,
   dotSpacing: 24,
   dotRadius: 2,
-  textCount: 18,
-  textSize: 44,
+  textCount: 2200,
+  textSize: 13,
   fieldCellSize: 18,
   dropRadius: 180,
   dropStrength: 16,
@@ -236,6 +249,14 @@ function lerp(a: number, b: number, t: number) {
   return a + (b - a) * t
 }
 
+function inverseLerp(min: number, max: number, value: number) {
+  if (max === min) {
+    return 0
+  }
+
+  return (value - min) / (max - min)
+}
+
 function isWordParticle(particle: Particle): particle is WordParticle {
   return particle.kind === 'word'
 }
@@ -274,7 +295,7 @@ function setGuiSectionVisible(section: GUI, visible: boolean) {
 function rebuildScene() {
   rippleField = new RippleField(viewportWidth || 1, viewportHeight || 1, settings.fieldCellSize)
   particles = settings.mode === 'text'
-    ? createWordParticles(viewportWidth, viewportHeight)
+    ? createWordParticles(viewportWidth)
     : createDotParticles(viewportWidth, viewportHeight)
   accumulatedTime = 0
   draw()
@@ -296,8 +317,8 @@ const dotFolder = gui.addFolder('Dot Settings')
 const textFolder = gui.addFolder('Text Settings')
 const dotSpacingController = dotFolder.add(settings, 'dotSpacing', 12, 60, 1).name('dot spacing')
 const dotRadiusController = dotFolder.add(settings, 'dotRadius', 1, 6, 0.1).name('dot radius')
-const textCountController = textFolder.add(settings, 'textCount', 3, 40, 1).name('text count')
-const textSizeController = textFolder.add(settings, 'textSize', 18, 96, 1).name('text size')
+const textCountController = textFolder.add(settings, 'textCount', 20, 5000, 1).name('text count')
+const textSizeController = textFolder.add(settings, 'textSize', 10, 96, 1).name('text size')
 const fieldCellSizeController = gui.add(settings, 'fieldCellSize', 8, 40, 1).name('field cell')
 gui.add(settings, 'dropRadius', 40, 320, 1).name('click radius')
 gui.add(settings, 'dropStrength', 1, 30, 0.1).name('click strength')
@@ -389,19 +410,17 @@ function sliceLineSegments(prepared: PreparedTextWithSegments, start: number, en
   return segments
 }
 
-function createWordParticles(width: number, height: number) {
-  const layoutWidth = Math.max(220, Math.min(width - TEXT_BLOCK_PADDING * 2, TEXT_BLOCK_MAX_WIDTH))
+function createWordParticles(width: number) {
+  const layoutWidth = Math.max(120, width - TEXT_BLOCK_PADDING * 2)
   const textLineHeight = getTextLineHeight()
   const prepared = getPreparedText()
   const layoutResult = layoutWithLines(prepared, layoutWidth, textLineHeight)
-  const blockHeight = layoutResult.lines.length * textLineHeight
-  const top = Math.max(TEXT_BLOCK_PADDING, (height - blockHeight) * 0.5)
   const nextParticles: WordParticle[] = []
 
   for (let lineIndex = 0; lineIndex < layoutResult.lines.length; lineIndex += 1) {
     const line = layoutResult.lines[lineIndex]!
-    const lineTop = top + lineIndex * textLineHeight
-    let x = (width - line.width) * 0.5
+    const lineTop = TEXT_BLOCK_PADDING + lineIndex * textLineHeight
+    let x = TEXT_BLOCK_PADDING
     const lineSegments = sliceLineSegments(prepared, line.start.segmentIndex, line.end.segmentIndex)
 
     for (const segment of lineSegments) {
@@ -489,6 +508,10 @@ function draw() {
 
     for (const particle of particles) {
       if (particle.kind === 'word') {
+        const speed = Math.hypot(particle.vx, particle.vy)
+        const darkness = clamp(inverseLerp(0, TEXT_SPEED_FOR_MAX_DARKNESS, speed), 0, 1)
+        const lightness = Math.round(lerp(TEXT_IDLE_LIGHTNESS, TEXT_ACTIVE_LIGHTNESS, darkness))
+        context.fillStyle = `rgb(${lightness}, ${lightness}, ${lightness})`
         context.fillText(particle.text, particle.x, particle.y)
       }
     }
