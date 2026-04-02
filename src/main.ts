@@ -72,13 +72,13 @@ const TEXT_LINE_HEIGHT_RATIO = 1.32
 const TEXT_WORDS = TEXT_SOURCE.trim().split(/\s+/)
 const TEXT_IDLE_LIGHTNESS = 222
 const TEXT_ACTIVE_LIGHTNESS = 28
-const TEXT_SPEED_FOR_MAX_DARKNESS = 140
 const TEXT_TONE_STEPS = 12
 const TEXT_POSITION_EPSILON = 0.1
 const TEXT_SCALE_EPSILON = 0.003
 const TEXT_SCALE_REST_HEIGHT_EPSILON = 0.18
 const TEXT_SCALE_REST_SPEED_EPSILON = 2.4
 const TEXT_RIPPLE_HEIGHT_FOR_MAX_SCALE = 5
+const TONE_RIPPLE_HEIGHT_RANGE = 5
 const PROJECT_URL = 'https://github.com/jeantimex/ripples'
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -121,8 +121,8 @@ const defaultSettings = {
   mode: 'text' as RenderMode,
   dotSpacing: 15,
   dotRadius: 3,
-  textCount: 500,
-  textSize: 15,
+  textCount: 800,
+  textSize: 12,
   textSelectable: false,
   rippleScaleAmplitude: 0.49,
   fieldCellSize: 18,
@@ -358,11 +358,28 @@ function updateTextLayerVisibility() {
   }
 }
 
-function getParticleLightness(particle: Particle) {
-  const speed = Math.hypot(particle.vx, particle.vy)
-  const darkness = clamp(inverseLerp(0, TEXT_SPEED_FOR_MAX_DARKNESS, speed), 0, 1)
+function getParticleSamplePoint(particle: Particle) {
+  return isWordParticle(particle)
+    ? {
+        x: particle.x + particle.width * 0.5,
+        y: particle.y + particle.height * 0.5,
+      }
+    : {
+        x: particle.x,
+        y: particle.y,
+      }
+}
 
-  return Math.round(lerp(TEXT_IDLE_LIGHTNESS, TEXT_ACTIVE_LIGHTNESS, darkness))
+function getParticleLightness(particle: Particle) {
+  const samplePoint = getParticleSamplePoint(particle)
+  const height = rippleField.surfaceHeightAt(samplePoint.x, samplePoint.y)
+  const normalizedHeight = clamp(
+    inverseLerp(0, TONE_RIPPLE_HEIGHT_RANGE, Math.abs(height)),
+    0,
+    1,
+  )
+
+  return Math.round(lerp(TEXT_IDLE_LIGHTNESS, TEXT_ACTIVE_LIGHTNESS, normalizedHeight))
 }
 
 function getQuantizedLightness(particle: Particle) {
@@ -375,8 +392,7 @@ function getQuantizedLightness(particle: Particle) {
 }
 
 function getWordScale(particle: WordParticle) {
-  const sampleX = particle.x + particle.width * 0.5
-  const sampleY = particle.y + particle.height * 0.5
+  const { x: sampleX, y: sampleY } = getParticleSamplePoint(particle)
   const height = rippleField.surfaceHeightAt(sampleX, sampleY)
   const speed = Math.hypot(particle.vx, particle.vy)
 
@@ -403,8 +419,7 @@ function getWordScale(particle: WordParticle) {
 }
 
 function getParticleScale(particle: Particle) {
-  const sampleX = isWordParticle(particle) ? particle.x + particle.width * 0.5 : particle.x
-  const sampleY = isWordParticle(particle) ? particle.y + particle.height * 0.5 : particle.y
+  const { x: sampleX, y: sampleY } = getParticleSamplePoint(particle)
   const height = rippleField.surfaceHeightAt(sampleX, sampleY)
   const speed = Math.hypot(particle.vx, particle.vy)
 
@@ -635,8 +650,7 @@ function resizeCanvas() {
 
 function updateParticles(dt: number) {
   for (const particle of particles) {
-    const sampleX = isWordParticle(particle) ? particle.x + particle.width * 0.5 : particle.x
-    const sampleY = isWordParticle(particle) ? particle.y + particle.height * 0.5 : particle.y
+    const { x: sampleX, y: sampleY } = getParticleSamplePoint(particle)
     const gradient = rippleField.gradientAt(sampleX, sampleY)
     const rippleFx = -gradient.x * settings.rippleForce
     const rippleFy = -gradient.y * settings.rippleForce
