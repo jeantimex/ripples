@@ -26,6 +26,7 @@ type WordParticle = ParticleBase & {
   renderedX: number
   renderedY: number
   renderedTone: number
+  renderedScale: number
 }
 
 type Particle = DotParticle | WordParticle
@@ -37,6 +38,7 @@ type SimulationSettings = {
   textCount: number
   textSize: number
   textSelectable: boolean
+  textScaleAmplitude: number
   fieldCellSize: number
   rippleSpeed: number
   dropRadius: number
@@ -73,6 +75,9 @@ const TEXT_ACTIVE_LIGHTNESS = 28
 const TEXT_SPEED_FOR_MAX_DARKNESS = 140
 const TEXT_TONE_STEPS = 12
 const TEXT_POSITION_EPSILON = 0.1
+const TEXT_SCALE_EPSILON = 0.003
+const TEXT_SCALE_REST_HEIGHT_EPSILON = 0.18
+const TEXT_RIPPLE_HEIGHT_FOR_MAX_SCALE = 5
 const PROJECT_URL = 'https://github.com/jeantimex/ripples'
 
 const app = document.querySelector<HTMLDivElement>('#app')
@@ -116,15 +121,16 @@ const defaultSettings = {
   dotSpacing: 15,
   dotRadius: 3,
   textCount: 500,
-  textSize: 13,
+  textSize: 15,
   textSelectable: false,
+  textScaleAmplitude: 0.49,
   fieldCellSize: 18,
   rippleSpeed: 0.3,
   dropRadius: 79,
   dropStrength: 5.4,
-  dragDropRadius: 38,
-  dragDropStrength: 1.1,
-  dragMinDistance: 6,
+  dragDropRadius: 25,
+  dragDropStrength: 0.4,
+  dragMinDistance: 3,
   rippleForce: 36300,
   springStrength: 7,
   motionDamping: 11,
@@ -233,6 +239,10 @@ class RippleField {
       x: (right - left) / (epsilon * 2),
       y: (bottom - top) / (epsilon * 2),
     }
+  }
+
+  surfaceHeightAt(x: number, y: number) {
+    return this.sampleHeight(x, y)
   }
 
   private sampleHeight(x: number, y: number) {
@@ -363,6 +373,30 @@ function getQuantizedLightness(particle: Particle) {
   return Math.round(lerp(TEXT_ACTIVE_LIGHTNESS, TEXT_IDLE_LIGHTNESS, quantized))
 }
 
+function getWordScale(particle: WordParticle) {
+  const sampleX = particle.x + particle.width * 0.5
+  const sampleY = particle.y + particle.height * 0.5
+  const height = rippleField.surfaceHeightAt(sampleX, sampleY)
+
+  if (Math.abs(height) <= TEXT_SCALE_REST_HEIGHT_EPSILON) {
+    return 1
+  }
+
+  const normalizedHeight = clamp(
+    inverseLerp(
+      -TEXT_RIPPLE_HEIGHT_FOR_MAX_SCALE,
+      TEXT_RIPPLE_HEIGHT_FOR_MAX_SCALE,
+      height,
+    ) * 2 - 1,
+    -1,
+    1,
+  )
+
+  const scale = 1 + normalizedHeight * settings.textScaleAmplitude
+
+  return Math.abs(scale - 1) <= TEXT_SCALE_EPSILON ? 1 : scale
+}
+
 function rebuildScene() {
   rippleField = new RippleField(viewportWidth || 1, viewportHeight || 1, settings.fieldCellSize)
   clearTextLayer()
@@ -393,6 +427,7 @@ const dotRadiusController = dotFolder.add(settings, 'dotRadius', 1, 6, 0.1).name
 const textCountController = textFolder.add(settings, 'textCount', 20, 800, 1).name('text count')
 const textSizeController = textFolder.add(settings, 'textSize', 10, 96, 1).name('text size')
 const textSelectableController = textFolder.add(settings, 'textSelectable').name('text selectable')
+const textScaleAmplitudeController = textFolder.add(settings, 'textScaleAmplitude', 0, 0.8, 0.01).name('text scale')
 const fieldCellSizeController = gui.add(settings, 'fieldCellSize', 8, 40, 1).name('field cell')
 gui.add(settings, 'rippleSpeed', 0.1, 4, 0.1).name('ripple speed')
 gui.add(settings, 'dropRadius', 40, 320, 1).name('click radius')
@@ -450,6 +485,7 @@ textSizeController.onFinishChange(() => {
 textSelectableController.onChange(() => {
   updateTextLayerVisibility()
 })
+textScaleAmplitudeController.onChange(draw)
 
 syncModeFolders()
 
@@ -520,6 +556,7 @@ function createWordParticles(width: number) {
         renderedX: Number.NaN,
         renderedY: Number.NaN,
         renderedTone: Number.NaN,
+        renderedScale: Number.NaN,
         originX: x,
         originY: lineTop,
         x,
@@ -542,6 +579,7 @@ function createWordElement(text: string) {
   element.style.fontWeight = String(TEXT_FONT_WEIGHT)
   element.style.fontSize = `${settings.textSize}px`
   element.style.lineHeight = `${getTextLineHeight()}px`
+  element.style.transformOrigin = '50% 50%'
   element.style.userSelect = settings.textSelectable ? 'text' : 'none'
   element.style.webkitUserSelect = settings.textSelectable ? 'text' : 'none'
   textLayer.append(element)
@@ -606,16 +644,20 @@ function draw() {
     for (const particle of particles) {
       if (particle.kind === 'word') {
         const lightness = getQuantizedLightness(particle)
+        const scale = getWordScale(particle)
 
         if (
           !Number.isFinite(particle.renderedX) ||
           !Number.isFinite(particle.renderedY) ||
+          !Number.isFinite(particle.renderedScale) ||
           Math.abs(particle.x - particle.renderedX) > TEXT_POSITION_EPSILON ||
-          Math.abs(particle.y - particle.renderedY) > TEXT_POSITION_EPSILON
+          Math.abs(particle.y - particle.renderedY) > TEXT_POSITION_EPSILON ||
+          Math.abs(scale - particle.renderedScale) > TEXT_SCALE_EPSILON
         ) {
-          particle.element.style.transform = `translate3d(${particle.x}px, ${particle.y}px, 0)`
+          particle.element.style.transform = `translate3d(${particle.x}px, ${particle.y}px, 0) scale(${scale})`
           particle.renderedX = particle.x
           particle.renderedY = particle.y
+          particle.renderedScale = scale
         }
 
         if (lightness !== particle.renderedTone) {
