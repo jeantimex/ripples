@@ -38,7 +38,7 @@ type SimulationSettings = {
   textCount: number
   textSize: number
   textSelectable: boolean
-  textScaleAmplitude: number
+  rippleScaleAmplitude: number
   fieldCellSize: number
   rippleSpeed: number
   dropRadius: number
@@ -77,6 +77,7 @@ const TEXT_TONE_STEPS = 12
 const TEXT_POSITION_EPSILON = 0.1
 const TEXT_SCALE_EPSILON = 0.003
 const TEXT_SCALE_REST_HEIGHT_EPSILON = 0.18
+const TEXT_SCALE_REST_SPEED_EPSILON = 2.4
 const TEXT_RIPPLE_HEIGHT_FOR_MAX_SCALE = 5
 const PROJECT_URL = 'https://github.com/jeantimex/ripples'
 
@@ -123,7 +124,7 @@ const defaultSettings = {
   textCount: 500,
   textSize: 15,
   textSelectable: false,
-  textScaleAmplitude: 0.49,
+  rippleScaleAmplitude: 0.49,
   fieldCellSize: 18,
   rippleSpeed: 0.3,
   dropRadius: 79,
@@ -377,8 +378,12 @@ function getWordScale(particle: WordParticle) {
   const sampleX = particle.x + particle.width * 0.5
   const sampleY = particle.y + particle.height * 0.5
   const height = rippleField.surfaceHeightAt(sampleX, sampleY)
+  const speed = Math.hypot(particle.vx, particle.vy)
 
-  if (Math.abs(height) <= TEXT_SCALE_REST_HEIGHT_EPSILON) {
+  if (
+    Math.abs(height) <= TEXT_SCALE_REST_HEIGHT_EPSILON ||
+    speed <= TEXT_SCALE_REST_SPEED_EPSILON
+  ) {
     return 1
   }
 
@@ -392,7 +397,34 @@ function getWordScale(particle: WordParticle) {
     1,
   )
 
-  const scale = 1 + normalizedHeight * settings.textScaleAmplitude
+  const scale = 1 + normalizedHeight * settings.rippleScaleAmplitude
+
+  return Math.abs(scale - 1) <= TEXT_SCALE_EPSILON ? 1 : scale
+}
+
+function getParticleScale(particle: Particle) {
+  const sampleX = isWordParticle(particle) ? particle.x + particle.width * 0.5 : particle.x
+  const sampleY = isWordParticle(particle) ? particle.y + particle.height * 0.5 : particle.y
+  const height = rippleField.surfaceHeightAt(sampleX, sampleY)
+  const speed = Math.hypot(particle.vx, particle.vy)
+
+  if (
+    Math.abs(height) <= TEXT_SCALE_REST_HEIGHT_EPSILON ||
+    speed <= TEXT_SCALE_REST_SPEED_EPSILON
+  ) {
+    return 1
+  }
+
+  const normalizedHeight = clamp(
+    inverseLerp(
+      -TEXT_RIPPLE_HEIGHT_FOR_MAX_SCALE,
+      TEXT_RIPPLE_HEIGHT_FOR_MAX_SCALE,
+      height,
+    ) * 2 - 1,
+    -1,
+    1,
+  )
+  const scale = 1 + normalizedHeight * settings.rippleScaleAmplitude
 
   return Math.abs(scale - 1) <= TEXT_SCALE_EPSILON ? 1 : scale
 }
@@ -427,7 +459,7 @@ const dotRadiusController = dotFolder.add(settings, 'dotRadius', 1, 6, 0.1).name
 const textCountController = textFolder.add(settings, 'textCount', 20, 800, 1).name('text count')
 const textSizeController = textFolder.add(settings, 'textSize', 10, 96, 1).name('text size')
 const textSelectableController = textFolder.add(settings, 'textSelectable').name('text selectable')
-const textScaleAmplitudeController = textFolder.add(settings, 'textScaleAmplitude', 0, 0.8, 0.01).name('text scale')
+const rippleScaleAmplitudeController = gui.add(settings, 'rippleScaleAmplitude', 0, 0.8, 0.01).name('ripple scale')
 const fieldCellSizeController = gui.add(settings, 'fieldCellSize', 8, 40, 1).name('field cell')
 gui.add(settings, 'rippleSpeed', 0.1, 4, 0.1).name('ripple speed')
 gui.add(settings, 'dropRadius', 40, 320, 1).name('click radius')
@@ -485,7 +517,7 @@ textSizeController.onFinishChange(() => {
 textSelectableController.onChange(() => {
   updateTextLayerVisibility()
 })
-textScaleAmplitudeController.onChange(draw)
+rippleScaleAmplitudeController.onChange(draw)
 
 syncModeFolders()
 
@@ -672,9 +704,10 @@ function draw() {
 
   for (const particle of particles) {
     const lightness = getParticleLightness(particle)
+    const scale = getParticleScale(particle)
     context.fillStyle = `rgb(${lightness}, ${lightness}, ${lightness})`
     context.beginPath()
-    context.arc(particle.x, particle.y, settings.dotRadius, 0, Math.PI * 2)
+    context.arc(particle.x, particle.y, settings.dotRadius * scale, 0, Math.PI * 2)
     context.fill()
   }
 }
